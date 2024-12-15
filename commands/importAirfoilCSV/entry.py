@@ -62,7 +62,10 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
 
     inputs.addBoolValueInput('fileSelectButton', 'CSV Select', False, '', False)
     inputs.addTextBoxCommandInput('fileNameText', 'CSV name', 'Selected CSV file name', 1, True)
+    inputs.addTextBoxCommandInput('filePassText', 'CSV pass', 'Selected CSV file pass', 1, True)
     
+
+
 def command_execute(args: adsk.core.CommandEventArgs):
     inputs = args.command.commandInputs
     des = adsk.fusion.Design.cast(app.activeProduct)
@@ -75,4 +78,4 @@ def command_preview(args: adsk.core.CommandEventArgs):
     
 def command_destroy(args: adsk.core.CommandEventHandler):
     des = adsk.fusion.Design.cast(app.activeProduct)
-    attribs = des.attributes
+    #attribs = des.attributes
