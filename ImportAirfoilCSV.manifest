@@ -1,0 +1,13 @@
+{
+	"autodeskProduct":	"Fusion",
+	"type":	"addin",
+	"id":	"92cab451-fca5-429f-97e5-8f7ff89dbf80",
+	"author":	"no~ri~",
+	"description":	{
+		"":	"Import Airfoil curve from CSV file."
+	},
+	"version":	"",
+	"runOnStartup":	false,
+	"supportedOS":	"windows|mac",
+	"editEnabled":	true
+}
