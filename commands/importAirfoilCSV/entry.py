@@ -63,9 +63,9 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     futil.add_handler(args.command.executePreview, command_preview, local_handlers=local_handlers)
     futil.add_handler(args.command.destroy, command_destroy, local_handlers=local_handlers)
 
-    inputs.addBoolValueInput('fileSelectButton', 'Select CSV', False, '', False)
-    inputs.addTextBoxCommandInput('fileNameText', 'CSV Name', 'Selected CSV file name', 1, True)
-    inputs.addTextBoxCommandInput('filePassText', 'CSV Pass', 'Selected CSV file pass', 1, True)
+    inputs.addBoolValueInput('fileSelectButton', 'Select CSV or DAT', False, '', False)
+    inputs.addTextBoxCommandInput('fileNameText', 'File Name', 'Selected file name', 1, True)
+    inputs.addTextBoxCommandInput('filePassText', 'File Pass', 'Selected file pass', 1, True)
     inputs.addBoolValueInput('edgeLineBool', 'Connect Trailing Edge', True, '', True)
     originPointInput = inputs.addSelectionInput('originPoint', 'Origin Point', 'Select Origin Point')
     originPointInput.addSelectionFilter('Vertices')
@@ -83,8 +83,8 @@ def command_changed(args: adsk.core.InputChangedEventArgs):
     if input.id == 'fileSelectButton':
         #ui.messageBox(f'ButtonClicked. The status is {input.value}.')
         dialog = ui.createFileDialog()
-        dialog.title = 'Open Airfoil CSV'
-        dialog.filter = 'Comma Separated Values (*.csv);;All Files (*.*)'
+        dialog.title = 'Open Airfoil File'
+        dialog.filter = 'Airfoil File (*.csv;*.dat) ;;All Files (*.*)'
         if dialog.showOpen() != adsk.core.DialogResults.DialogOK:
             return
         filepass = dialog.filename
@@ -185,19 +185,22 @@ def createAirfoilSketch(comp: adsk.fusion.Component, filePass: str = None, origi
             line = f.readline()
             data = []
             while line:
-                pntStrArr = line.split(',')
+                if "," in line :
+                    pntStrArr = line.split(",")
+                else:
+                    pntStrArr = line.split()
                 for pntStr in pntStrArr:
                     try:
                         data.append(float(pntStr))
                     except:
                         break
             
-                if len(data) >= 3 :
+                if len(data) >= 2 :
                     point = adsk.core.Point3D.create(data[0], data[1], 0)
                     point.transformBy(matrix)
                     points.add(point)
-                line = f.readline()
-                data.clear()            
+                data.clear()    
+                line = f.readline()        
         if points.count:
             spline = sketchCurves.sketchFittedSplines.add(points)
             if connectTrailingEdge:
