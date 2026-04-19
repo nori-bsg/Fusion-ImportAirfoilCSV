@@ -23,13 +23,15 @@ COMMAND_BESIDE_ID = 'PrimitivePipe'
 local_handlers = []
 sketch = None
 
+_filePass = None
+
 def start():
     futil.log(f'{CMD_NAME} Command started')
     cmdDef = ui.commandDefinitions.itemById(CMD_ID)
     if cmdDef:
         cmdDef.deleteMe()
     
-    icon_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources', '')
+    icon_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/CommandIcon', '')
 
     cmdDef = ui.commandDefinitions.addButtonDefinition(CMD_ID, CMD_NAME, CMD_Description, icon_folder)
 
@@ -56,27 +58,42 @@ def stop():
         command_definition.deleteMe()
 
 def command_created(args: adsk.core.CommandCreatedEventArgs):
-    inputs = args.command.commandInputs
-    
-    futil.add_handler(args.command.inputChanged, command_changed, local_handlers=local_handlers)
-    futil.add_handler(args.command.execute, command_execute, local_handlers=local_handlers)
-    futil.add_handler(args.command.executePreview, command_preview, local_handlers=local_handlers)
-    futil.add_handler(args.command.destroy, command_destroy, local_handlers=local_handlers)
+    try:
+        inputs = args.command.commandInputs
+        
+        futil.add_handler(args.command.inputChanged, command_changed, local_handlers=local_handlers)
+        futil.add_handler(args.command.execute, command_execute, local_handlers=local_handlers)
+        futil.add_handler(args.command.executePreview, command_preview, local_handlers=local_handlers)
+        futil.add_handler(args.command.destroy, command_destroy, local_handlers=local_handlers)
+        inputs.addBoolValueInput('fileSelectButton', 'Airfoil file', False, '', False)
+        fileNameTextBox = inputs.addTextBoxCommandInput('fileNameText', 'File Name', 'Selected file name', 1, True)
+        fileNameTextBox.isFullWidth = True
+        fileNameTextBox.isVisible = False
+        #inputs.addTextBoxCommandInput('filePassText', 'File Pass', 'Selected file pass', 1, True)
+        inputs.addBoolValueInput('edgeLineBool', 'Connect Trailing Edge', True, '', True)
+        axisSelectButton = inputs.addButtonRowCommandInput('MethodSelectButton', 'Method', False)
+        axisSelectButton.listItems.clear()
+        axisSelectButton.listItems.add('Line', True, os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/OneLineSelect'), -1)
+        axisSelectButton.listItems.add('Points', False, os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/TwoPointsSelect'), -1)
+        axisInput = inputs.addSelectionInput('axis', 'Axis', 'Select Axis')
+        axisInput.isVisible = True
+        axisInput.addSelectionFilter('LinearEdges')
+        axisInput.addSelectionFilter('SketchLines')
+        axisInput.addSelectionFilter('ConstructionLines')
+        originPointInput = inputs.addSelectionInput('originPoint', 'Origin Point', 'Select Origin Point')
+        originPointInput.isVisible = False
+        originPointInput.addSelectionFilter('Vertices')
+        originPointInput.addSelectionFilter('SketchPoints')
+        originPointInput.addSelectionFilter('ConstructionPoints')
+        edgePointInput = inputs.addSelectionInput('edgePoint', 'Trailing Edge Point', 'Select Trailing Edge Point')
+        edgePointInput.isVisible = False
+        edgePointInput.addSelectionFilter('Vertices')
+        edgePointInput.addSelectionFilter('SketchPoints')
+        edgePointInput.addSelectionFilter('ConstructionPoints')
+        inputs.addAngleValueCommandInput('tiltAngle', 'Tilt Angle', adsk.core.ValueInput.createByReal(0)).isVisible = False
+    except Exception as error:
+        ui.messageBox(str(error))
 
-    inputs.addBoolValueInput('fileSelectButton', 'Select CSV or DAT', False, '', False)
-    inputs.addTextBoxCommandInput('fileNameText', 'File Name', 'Selected file name', 1, True)
-    inputs.addTextBoxCommandInput('filePassText', 'File Pass', 'Selected file pass', 1, True)
-    inputs.addBoolValueInput('edgeLineBool', 'Connect Trailing Edge', True, '', True)
-    originPointInput = inputs.addSelectionInput('originPoint', 'Origin Point', 'Select Origin Point')
-    originPointInput.addSelectionFilter('Vertices')
-    originPointInput.addSelectionFilter('SketchPoints')
-    originPointInput.addSelectionFilter('ConstructionPoints')
-    edgePointInput = inputs.addSelectionInput('edgePoint', 'Trailing Edge Point', 'Select Trailing Edge Point')
-    edgePointInput.addSelectionFilter('Vertices')
-    edgePointInput.addSelectionFilter('SketchPoints')
-    edgePointInput.addSelectionFilter('ConstructionPoints')
-    inputs.addAngleValueCommandInput('tiltAngle', 'Tilt Angle', adsk.core.ValueInput.createByReal(0)).isVisible = False
-    
 def command_changed(args: adsk.core.InputChangedEventArgs):
     inputs = args.inputs
     input = args.input
@@ -89,11 +106,33 @@ def command_changed(args: adsk.core.InputChangedEventArgs):
             return
         filepass = dialog.filename
         filename = filepass.rsplit('/', 1)[1]
-        args.inputs.itemById('filePassText').text = filepass
+        global _filePass
+        _filePass = filepass
         args.inputs.itemById('fileNameText').text = filename
+        args.inputs.itemById('fileNameText').isVisible = True
+    elif input.id == 'axis':
+        tiltAngleInput :adsk.core.AngleValueCommandInput = inputs.itemById('tiltAngle')
+        if input.selectionCount == 1:
+            tiltAngleInput.isVisible = True
+            axisEntity = input.selection(0).entity
+            if axisEntity.objectType == 'adsk::fusion::BRepEdge':
+                edgePoint = edgePoint.geometry
+            else:
+                edgePoint = edgePoint.worldGeometry
+            matrix = adsk.core.Matrix3D.create()
+            matrix.setToRotation(math.pi / 2.0, adsk.core.Vector3D.create(0, 0, 1), edgePoint)
+            horizontalVector = adsk.core.Vector3D.create(*[(b - a) for a, b in zip(edgePoint.startVertex.geometry.asArray(), edgePoint.endVertex.geometry.asArray())])
+            horizontalVector.z = 0
+            horizontalVector.transformBy(matrix)
+            horizontalVector.normalize()
+            verticalVector = horizontalVector.crossProduct(adsk.core.Vector3D.create(*[(a - b) for a, b in zip(edgePoint.startVertex.geometry.asArray(), edgePoint.endVertex.geometry.asArray())]))
+            verticalVector.normalize()
+            tiltAngleInput.setManipulator(edgePoint, verticalVector, horizontalVector)
+        else:
+            tiltAngleInput.isVisible = False
     elif input.id == 'originPoint' or input.id =='edgePoint':
         tiltAngleInput :adsk.core.AngleValueCommandInput = inputs.itemById('tiltAngle')
-        
+  
         if inputs.itemById('originPoint').selectionCount == 1 and inputs.itemById('edgePoint').selectionCount == 1:
             tiltAngleInput.isVisible = True
             originPointEntity = inputs.itemById('originPoint').selection(0).entity
@@ -118,6 +157,18 @@ def command_changed(args: adsk.core.InputChangedEventArgs):
 
         else:
             tiltAngleInput.isVisible = False
+    elif input.id == 'MethodSelectButton':
+        axisInput = inputs.itemById('axis')
+        originPointInput = inputs.itemById('originPoint')
+        edgePointInput = inputs.itemById('edgePoint')
+        if input.selectedItem.name == 'Line':
+            axisInput.isVisible = True
+            originPointInput.isVisible = False
+            edgePointInput.isVisible = False
+        else:
+            axisInput.isVisible = False
+            originPointInput.isVisible = True
+            edgePointInput.isVisible = True
 
 def command_execute(args: adsk.core.CommandEventArgs):
     inputs = args.command.commandInputs
@@ -133,7 +184,7 @@ def command_execute(args: adsk.core.CommandEventArgs):
         edgePoint = edgePointEntity.worldGeometry
     else:
         edgePoint = edgePointEntity.geometry
-    createAirfoilSketch(root, inputs.itemById('filePassText').text, originPoint, edgePoint, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value)
+    createAirfoilSketch(root, _filePass, originPoint, edgePoint, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value)
 
 def command_preview(args: adsk.core.CommandEventArgs):
     des = adsk.fusion.Design.cast(app.activeProduct)
@@ -151,7 +202,7 @@ def command_preview(args: adsk.core.CommandEventArgs):
             edgePoint = edgePointEntity.worldGeometry
         else:
             edgePoint = edgePointEntity.geometry
-        sketch = createAirfoilSketch(root, inputs.itemById('filePassText').text, originPoint, edgePoint, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value)
+        sketch = createAirfoilSketch(root, _filePass, originPoint, edgePoint, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value)
     except Exception as error:
         ui.messageBox(str(error))
 
