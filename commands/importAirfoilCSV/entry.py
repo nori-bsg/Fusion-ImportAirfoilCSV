@@ -351,7 +351,7 @@ def createAirfoilSketch(sketch: adsk.fusion.Sketch, filePass: str, originPoint: 
         sketchEdgePoint = sketch.project2([edgePoint], True)[0]
         vectorToOrigin = adsk.core.Vector3D.create(*[(a - b) for a, b in zip(sketchOriginPoint.worldGeometry.asArray(), sketchEdgePoint.worldGeometry.asArray())])
         if upVector.isParallelTo(vectorToOrigin):
-            frontEyeVector.scaleBy(-upVector.dotProduct(vectorToOrigin))
+            frontEyeVector.scaleBy(upVector.dotProduct(vectorToOrigin))
             normalVector = frontEyeVector.crossProduct(vectorToOrigin)
             sketchYVector = normalVector.crossProduct(vectorToOrigin)
         else:
@@ -516,7 +516,7 @@ def setAngleManipulator(input: adsk.core.AngleValueCommandInput, originPoint: ad
         frontEyeVector = viewport.frontEyeDirection
         vectorToOrigin = adsk.core.Vector3D.create(*[(a - b) for a, b in zip(originPoint.asArray(), edgePoint.asArray())])
         if upVector.isParallelTo(vectorToOrigin):
-            frontEyeVector.scaleBy(-upVector.dotProduct(vectorToOrigin))
+            frontEyeVector.scaleBy(upVector.dotProduct(vectorToOrigin))
             horizontalVector = frontEyeVector.crossProduct(vectorToOrigin)
             verticalVector = horizontalVector.crossProduct(vectorToOrigin)
         else:
