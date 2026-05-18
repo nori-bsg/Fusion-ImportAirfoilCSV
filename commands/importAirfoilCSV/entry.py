@@ -27,6 +27,7 @@ sketch = None
 _filePass = None
 _isSplineFit = False
 _swapDirection = False
+_useDimensions = False
 
 def start():
     try:
@@ -81,6 +82,7 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
         fileNameTextBox.isVisible = _filePass is not None
         #inputs.addTextBoxCommandInput('filePassText', 'File Pass', 'Selected file pass', 1, True)
         inputs.addBoolValueInput('edgeLineBool', 'Connect Trailing Edge', True, '', True)
+        inputs.addBoolValueInput('useDimensions', 'Use Dimensions', True, '', False)
         connectPointsButton = inputs.addButtonRowCommandInput('ConnectionPointsMethodSelectButton', 'Connection Points Method', False)
         connectPointsButton.listItems.clear()
         connectPointsButton.listItems.add('Linear', True, os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/LineFitIcon'), -1)
@@ -243,7 +245,9 @@ def command_changed(args: adsk.core.InputChangedEventArgs):
         elif input.id == 'ConnectionPointsMethodSelectButton':
             global _isSplineFit
             _isSplineFit = input.selectedItem.name == 'Spline'
-
+        elif input.id == 'useDimensions':
+            global _useDimensions
+            _useDimensions = input.value
 
     except Exception as error:
         exception_type, exception_object, exception_traceback = sys.exc_info()
@@ -252,10 +256,6 @@ def command_changed(args: adsk.core.InputChangedEventArgs):
         ui.messageBox(f"command_changed: {str(error)} ({filename}:{line_number})")
 
 def command_execute(args: adsk.core.CommandEventArgs):
-    pass
-    #createAirfoilSketch(root, _filePass, originPoint, edgePoint, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value)
-
-def command_preview(args: adsk.core.CommandEventArgs):
     try:
         inputs = args.command.commandInputs
         des = adsk.fusion.Design.cast(app.activeProduct)
@@ -264,16 +264,166 @@ def command_preview(args: adsk.core.CommandEventArgs):
         if methodSelectButton.selectedItem.name == 'Points':
             originPointEntity = inputs.itemById('originPoint').selection(0).entity
             edgePointEntity = inputs.itemById('edgePoint').selection(0).entity
-            sketch = createAirfoilSketchByPoints(root, _filePass, originPointEntity, edgePointEntity, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value, _isSplineFit)
+            sketch = createAirfoilSketchByPoints(root, _filePass, originPointEntity, edgePointEntity, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value, _isSplineFit, _useDimensions)
         else:
             axisEntity = inputs.itemById('axis').selection(0).entity
-            sketch = createAirfoilSketchByLine(root, _filePass, axisEntity, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value, _swapDirection, _isSplineFit)
-        args.isValidResult = sketch is not None
+            sketch = createAirfoilSketchByLine(root, _filePass, axisEntity, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value, _swapDirection, _isSplineFit, _useDimensions)
+    except Exception as error:
+        exception_type, exception_object, exception_traceback = sys.exc_info()
+        filename = exception_traceback.tb_frame.f_code.co_filename
+        line_number = exception_traceback.tb_lineno
+        ui.messageBox(f"command_execute: {str(error)} ({filename}:{line_number})")
+
+def command_preview(args: adsk.core.CommandEventArgs):
+    des = adsk.fusion.Design.cast(app.activeProduct)
+    root = des.rootComponent
+    inputs = args.command.commandInputs
+    
+    try:
+        if root.customGraphicsGroups.count > 0:
+            root.customGraphicsGroups.item(0).deleteMe()
+            app.activeViewport.refresh()
+        graphics = root.customGraphicsGroups.add()
+        methodSelectButton : adsk.core.ButtonRowCommandInput = inputs.itemById('MethodSelectButton')
+        if methodSelectButton.selectedItem.name == 'Points':
+            originPointEntity = inputs.itemById('originPoint').selection(0).entity
+            edgePointEntity = inputs.itemById('edgePoint').selection(0).entity
+            if originPointEntity.objectType == 'adsk::fusion::SketchPoint':
+                originPointVertex = originPointEntity.worldGeometry
+            else:
+                originPointVertex = originPointEntity.geometry
+            if edgePointEntity.objectType == 'adsk::fusion::SketchPoint':
+                edgePointVertex = edgePointEntity.worldGeometry
+            else:
+                edgePointVertex = edgePointEntity.geometry
+        else:
+            axisEntity = inputs.itemById('axis').selection(0).entity
+            if axisEntity.objectType == 'adsk::fusion::SketchLine':
+                originPointVertex = axisEntity.startSketchPoint.worldGeometry
+                edgePointVertex = axisEntity.endSketchPoint.worldGeometry
+            else:
+                originPointVertex = axisEntity.startVertex.geometry
+                edgePointVertex = axisEntity.endVertex.geometry
+            if inputs.itemById('SwapDirection').value:
+                originPointVertex, edgePointVertex = edgePointVertex, originPointVertex
+
+        airfoilPoints = []
+        with io.open(_filePass, 'r', encoding='utf-8-sig') as f:
+            fileExtension = os.path.splitext(_filePass)[1]
+            if fileExtension.lower() == '.dat':
+                numBlank = 0
+                line = f.readline()
+                while line:
+                    if line.strip() == '':
+                        numBlank += 1
+                    line = f.readline()
+                if numBlank == 0:
+                    f.seek(0)
+                    f.readline()
+                    line = f.readline()
+                    while line:
+                        pntStrArr = line.split()
+                        if len(pntStrArr) >= 2:
+                            try:
+                                airfoilPointX = float(pntStrArr[0])
+                                airfoilPointY = float(pntStrArr[1])
+                                airfoilPoints.append((airfoilPointX, airfoilPointY))
+                            except:
+                                pass
+                        line = f.readline()
+                elif numBlank == 2:
+                    f.seek(0)
+                    f.readline()
+                    line = f.readline()
+                    f.readline()
+                    upSurfacePointsNum, downSurfacePointsNum = line.split()
+                    upSurfacePointsNum = int(float(upSurfacePointsNum))
+                    downSurfacePointsNum = int(float(downSurfacePointsNum))
+                    for i in range(upSurfacePointsNum):
+                        line = f.readline()
+                        pntStrArr = line.split()
+                        if len(pntStrArr) >= 2:
+                            try:
+                                airfoilPointX = float(pntStrArr[0])
+                                airfoilPointY = float(pntStrArr[1])
+                                airfoilPoints.append((airfoilPointX, airfoilPointY))
+                            except:
+                                pass
+                    f.readline()
+                    line = f.readline()
+                    pntStrArr = line.split()
+                    if len(pntStrArr) >= 2:
+                        try:
+                            airfoilPointX = float(pntStrArr[0])
+                            airfoilPointY = float(pntStrArr[1])
+                            airfoilPoints.append((airfoilPointX, airfoilPointY))
+                        except:
+                            pass
+                    if airfoilPoints[0] == airfoilPoints[-1]:
+                        airfoilPoints = airfoilPoints[:-1]
+                    airfoilPoints.reverse()
+
+                    for i in range(downSurfacePointsNum - 1):     
+                        line = f.readline()
+                        pntStrArr = line.split()
+                        if len(pntStrArr) >= 2:
+                            try:
+                                airfoilPointX = float(pntStrArr[0])
+                                airfoilPointY = float(pntStrArr[1])
+                                airfoilPoints.append((airfoilPointX, airfoilPointY))
+                            except:
+                                pass
+            else:
+                line = f.readline()
+                while line:
+                    pntStrArr = line.split(",")
+                    if len(pntStrArr) >= 2:    
+                        try:
+                            airfoilPointX = float(pntStrArr[0])
+                            airfoilPointY = float(pntStrArr[1])
+                            airfoilPoints.append((airfoilPointX, airfoilPointY))
+                        except:
+                            pass
+                    line = f.readline()
+            f.close()
+
+        matrix = adsk.core.Matrix3D.create()
+        vectorToOrigin = adsk.core.Vector3D.create(*[(a - b) for a, b in zip(originPointVertex.asArray(), edgePointVertex.asArray())])
+        upVector = app.activeViewport.frontUpDirection
+        if upVector.isParallelTo(vectorToOrigin):
+            frontEyeVector = app.activeViewport.frontEyeDirection
+            frontEyeVector.scaleBy(upVector.dotProduct(vectorToOrigin))
+            normalVector = frontEyeVector.crossProduct(vectorToOrigin)
+            sketchYVector = normalVector.crossProduct(vectorToOrigin)
+        else:
+            normalVector = vectorToOrigin.crossProduct(upVector)
+            sketchYVector = normalVector.crossProduct(vectorToOrigin)
+        normalVector.normalize()
+        sketchYVector.normalize()
+        tiltAngle = inputs.itemById('tiltAngle').value
+        sketchYVector.scaleBy(math.cos(tiltAngle))
+        normalVector.scaleBy(math.sin(tiltAngle))
+        sketchYVector.add(normalVector)
+        sketchYVector.scaleBy(vectorToOrigin.length)
+        matrix.setWithCoordinateSystem(originPointVertex, adsk.core.Vector3D.create(*[(b - a) for a, b in zip(originPointVertex.asArray(), edgePointVertex.asArray())]), sketchYVector, adsk.core.Vector3D.create())
+        vertexes = []
+        for i in range(len(airfoilPoints)):
+            vertex = adsk.core.Point3D.create(airfoilPoints[i][0], airfoilPoints[i][1], 0)
+            vertex.transformBy(matrix)
+            vertexes.extend([vertex.x, vertex.y, vertex.z])
+        triangles = ear_clipping_triangulate(airfoilPoints)
+        lines = graphics.addLines(adsk.fusion.CustomGraphicsCoordinates.create(vertexes), [], True)
+        lines.color = adsk.fusion.CustomGraphicsShowThroughColorEffect.create(adsk.core.Color.create(0, 0, 0, 255), 0.1)
+        lines.weight = 1
+        trianglesGraphics = graphics.addMesh(adsk.fusion.CustomGraphicsCoordinates.create(vertexes), triangles, [], [])
+        trianglesGraphics.color = adsk.fusion.CustomGraphicsSolidColorEffect.create(adsk.core.Color.create(240, 249, 253, 0))
+        trianglesGraphics.setOpacity(0.7, True)
     except Exception as error:
         exception_type, exception_object, exception_traceback = sys.exc_info()
         filename = exception_traceback.tb_frame.f_code.co_filename
         line_number = exception_traceback.tb_lineno
         ui.messageBox(f"command_preview: {str(error)} ({filename}:{line_number})")
+        return None
 
 def command_destroy(args: adsk.core.CommandEventHandler):
     des = adsk.fusion.Design.cast(app.activeProduct)
@@ -281,7 +431,7 @@ def command_destroy(args: adsk.core.CommandEventHandler):
     
     global local_handlers
     local_handlers = []
-def createAirfoilSketchByLine(comp: adsk.fusion.Component, filePass: str, axis: adsk.core.Base, tiltAngle: float, connectTrailingEdge: bool, swapDirection: bool, isSplineFit: bool):
+def createAirfoilSketchByLine(comp: adsk.fusion.Component, filePass: str, axis: adsk.core.Base, tiltAngle: float, connectTrailingEdge: bool, swapDirection: bool, isSplineFit: bool, useDimensions: bool):
     try:
         app = adsk.core.Application.get()
         viewport = app.activeViewport
@@ -309,7 +459,8 @@ def createAirfoilSketchByLine(comp: adsk.fusion.Component, filePass: str, axis: 
         constructionPlaneInput.setByAngle(axis, adsk.core.ValueInput.createByReal(planeAngle), plarnarPlane)
         constructionPlane = constructionPlanes.add(constructionPlaneInput)
         sketch = sketches.add(constructionPlane)
-        createAirfoilSketch(sketch, filePass, originPoint, edgePoint, tiltAngle, connectTrailingEdge, isSplineFit)
+        createAirfoilSketch(sketch, filePass, originPoint, edgePoint, tiltAngle, connectTrailingEdge, isSplineFit, useDimensions)
+        root.parentDesign.timeline.timelineGroups.add(constructionPlane.timelineObject.index, sketch.timelineObject.index)
         return sketch
     except Exception as error:
         exception_type, exception_object, exception_traceback = sys.exc_info()
@@ -317,7 +468,7 @@ def createAirfoilSketchByLine(comp: adsk.fusion.Component, filePass: str, axis: 
         line_number = exception_traceback.tb_lineno
         ui.messageBox(f"createAirfoilSketch (byLine): {str(error)} ({filename}:{line_number})")
 
-def createAirfoilSketchByPoints(comp: adsk.fusion.Component, filePass: str, originPoint: adsk.core.Base, edgePoint: adsk.core.Base, tiltAngle: float, connectTrailingEdge: bool, isSplineFit: bool):
+def createAirfoilSketchByPoints(comp: adsk.fusion.Component, filePass: str, originPoint: adsk.core.Base, edgePoint: adsk.core.Base, tiltAngle: float, connectTrailingEdge: bool, isSplineFit: bool, useDimensions: bool):
     try:
         app = adsk.core.Application.get()
         viewport = app.activeViewport
@@ -338,7 +489,8 @@ def createAirfoilSketchByPoints(comp: adsk.fusion.Component, filePass: str, orig
         constructionPlane = constructionPlanes.add(constructionPlaneInput)
         constructionAxis.isLightBulbOn = False
         sketch = comp.sketches.add(constructionPlane)
-        createAirfoilSketch(sketch, filePass, originPoint, edgePoint, tiltAngle, connectTrailingEdge, isSplineFit)
+        createAirfoilSketch(sketch, filePass, originPoint, edgePoint, tiltAngle, connectTrailingEdge, isSplineFit, useDimensions)
+        root.parentDesign.timeline.timelineGroups.add(constructionAxis.timelineObject.index, sketch.timelineObject.index)
         return sketch
     except Exception as error:
         exception_type, exception_object, exception_traceback = sys.exc_info()
@@ -347,7 +499,112 @@ def createAirfoilSketchByPoints(comp: adsk.fusion.Component, filePass: str, orig
         ui.messageBox(f"createAirfoilSketch (byPoints): {str(error)} ({filename}:{line_number})")
     return None
 
-def createAirfoilSketch(sketch: adsk.fusion.Sketch, filePass: str, originPoint: adsk.core.Base, edgePoint: adsk.core.Base, tiltAngle: float, connectTrailingEdge: bool, isSplineFit: bool):
+def ear_clipping_triangulate(polygon):
+    """
+    Ear clipping triangulation.
+    Input: polygon - list of (x, y) tuples representing a simple polygon (may be CW or CCW).
+    Output: flat list of vertex indices in triples: [i0, i1, i2, i3, i4, i5, ...]
+    """
+    if not polygon or len(polygon) < 3:
+        return []
+
+    def area_signed(pts):
+        a = 0.0
+        for i in range(len(pts)):
+            x1, y1 = pts[i]
+            x2, y2 = pts[(i + 1) % len(pts)]
+            a += x1 * y2 - x2 * y1
+        return a / 2.0
+
+    def is_convex(a, b, c):
+        return ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) > 1e-12
+
+    def point_in_triangle(pt, a, b, c):
+        # barycentric technique
+        px, py = pt
+        ax, ay = a
+        bx, by = b
+        cx, cy = c
+        v0x, v0y = cx - ax, cy - ay
+        v1x, v1y = bx - ax, by - ay
+        v2x, v2y = px - ax, py - ay
+        dot00 = v0x * v0x + v0y * v0y
+        dot01 = v0x * v1x + v0y * v1y
+        dot02 = v0x * v2x + v0y * v2y
+        dot11 = v1x * v1x + v1y * v1y
+        dot12 = v1x * v2x + v1y * v2y
+        denom = dot00 * dot11 - dot01 * dot01
+        if abs(denom) < 1e-18:
+            return False
+        inv_denom = 1.0 / denom
+        u = (dot11 * dot02 - dot01 * dot12) * inv_denom
+        v = (dot00 * dot12 - dot01 * dot02) * inv_denom
+        return (u >= 0) and (v >= 0) and (u + v <= 1)
+
+    # Ensure polygon is CCW for the convex test
+    pts = list(polygon)
+    if area_signed(pts) < 0:
+        pts.reverse()
+
+    vertex_indices = list(range(len(pts)))
+    triangles = []
+
+    guard = 0
+    while len(vertex_indices) > 3 and guard < len(pts) * 3:
+        ear_found = False
+        for i_idx in range(len(vertex_indices)):
+            prev_idx = vertex_indices[(i_idx - 1) % len(vertex_indices)]
+            curr_idx = vertex_indices[i_idx]
+            next_idx = vertex_indices[(i_idx + 1) % len(vertex_indices)]
+            a = pts[prev_idx]
+            b = pts[curr_idx]
+            c = pts[next_idx]
+            if not is_convex(a, b, c):
+                continue
+            # check no other point is inside triangle abc
+            any_inside = False
+            for other_idx in vertex_indices:
+                if other_idx in (prev_idx, curr_idx, next_idx):
+                    continue
+                if point_in_triangle(pts[other_idx], a, b, c):
+                    any_inside = True
+                    break
+            if any_inside:
+                continue
+            # it's an ear
+            triangles.extend([prev_idx, curr_idx, next_idx])
+            vertex_indices.pop(i_idx)
+            ear_found = True
+            break
+        if not ear_found:
+            guard += 1
+            # If no ear found after a full pass, attempt to remove a nearly-collinear vertex
+            min_area = None
+            remove_pos = None
+            for i_idx in range(len(vertex_indices)):
+                prev_idx = vertex_indices[(i_idx - 1) % len(vertex_indices)]
+                curr_idx = vertex_indices[i_idx]
+                next_idx = vertex_indices[(i_idx + 1) % len(vertex_indices)]
+                a = pts[prev_idx]
+                b = pts[curr_idx]
+                c = pts[next_idx]
+                tri_area = abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+                if min_area is None or tri_area < min_area:
+                    min_area = tri_area
+                    remove_pos = i_idx
+            if remove_pos is not None:
+                prev_idx = vertex_indices[(remove_pos - 1) % len(vertex_indices)]
+                curr_idx = vertex_indices[remove_pos]
+                next_idx = vertex_indices[(remove_pos + 1) % len(vertex_indices)]
+                triangles.extend([prev_idx, curr_idx, next_idx])
+                vertex_indices.pop(remove_pos)
+
+    if len(vertex_indices) == 3:
+        triangles.extend([vertex_indices[0], vertex_indices[1], vertex_indices[2]])
+
+    return triangles
+
+def createAirfoilSketch(sketch: adsk.fusion.Sketch, filePass: str, originPoint: adsk.core.Base, edgePoint: adsk.core.Base, tiltAngle: float, connectTrailingEdge: bool, isSplineFit: bool, useDimensions: bool):
     try:
         app = adsk.core.Application.get()
         viewport = app.activeViewport
@@ -376,23 +633,8 @@ def createAirfoilSketch(sketch: adsk.fusion.Sketch, filePass: str, originPoint: 
         sketchYPoint = sketch.modelToSketchSpace(sketchYPoint)
         matrix = adsk.core.Matrix3D.create()
         matrix.setWithCoordinateSystem(sketchOriginPoint.geometry , adsk.core.Vector3D.create(*[(b - a) for a, b in zip(sketchOriginPoint.geometry.asArray(), sketchEdgePoint.geometry.asArray())]), adsk.core.Vector3D.create(*[(a - b) for a, b in zip(sketchYPoint.asArray(), sketchOriginPoint.geometry.asArray())]), adsk.core.Vector3D.create())
-        baseXLinePoint = adsk.core.Point3D.create(-0.1, 0, 0)
-        baseYLinePoint = adsk.core.Point3D.create(0, -0.1, 0)
-        baseOriginPoint = adsk.core.Point3D.create(-0.1, -0.1, 0)
-        baseXLinePoint.transformBy(matrix)
-        baseYLinePoint.transformBy(matrix)
-        baseOriginPoint.transformBy(matrix)
-        baseXLine = sketchCurves.sketchLines.addByTwoPoints(baseXLinePoint, baseOriginPoint)
-        baseYLine = sketchCurves.sketchLines.addByTwoPoints(baseYLinePoint, baseXLine.endSketchPoint)
-        chordLine = sketchCurves.sketchLines.addByTwoPoints(baseXLine.startSketchPoint, sketchOriginPoint)
-        baseXLine.isConstruction = True
-        baseYLine.isConstruction = True
-        chordLine.isConstruction = True
+
         constraints = sketch.geometricConstraints
-        constraints.addPerpendicular(baseXLine, baseYLine)
-        constraints.addPerpendicular(baseXLine, chordLine)
-        constraints.addEqual(baseXLine, baseYLine)
-        constraints.addCoincident(sketchEdgePoint, chordLine)
         airfoilPoints = []
         with io.open(filePass, 'r', encoding='utf-8-sig') as f:
             fileExtension = os.path.splitext(filePass)[1]
@@ -446,7 +688,7 @@ def createAirfoilSketch(sketch: adsk.fusion.Sketch, filePass: str, originPoint: 
                         except:
                             pass
                     if airfoilPoints[0] == airfoilPoints[-1]:
-                        airfoilPoints = airfoilPoints[:-2]
+                        airfoilPoints = airfoilPoints[:-1]
                     airfoilPoints.reverse()
 
                     for i in range(downSurfacePointsNum - 1):     
@@ -473,53 +715,103 @@ def createAirfoilSketch(sketch: adsk.fusion.Sketch, filePass: str, originPoint: 
                     line = f.readline()
             f.close()
         minCoordinate = min(min([min(pnt) for pnt in airfoilPoints]), -0.1)
-        dimenisions = sketch.sketchDimensions
-        chordDimensionTextPos = adsk.core.Point3D.create(0.5, minCoordinate - 0.1, 0)
-        baseXLineDimension1TextPos = adsk.core.Point3D.create(minCoordinate - 0.1, 0.1, 0)
-        baseXLineDimension1TextPos.transformBy(matrix)
-        baseXLineDimension2TextPos = adsk.core.Point3D.create(minCoordinate - 0.1, minCoordinate / 2.0, 0)
-        baseXLineDimension2TextPos.transformBy(matrix)
-        chordDimension = dimenisions.addDistanceDimension(sketchOriginPoint, sketchEdgePoint, adsk.fusion.DimensionOrientations.AlignedDimensionOrientation, chordDimensionTextPos, False)
-        baseXLineDimension1 = dimenisions.addDistanceDimension(baseXLine.startSketchPoint, sketchOriginPoint, adsk.fusion.DimensionOrientations.AlignedDimensionOrientation, baseXLineDimension1TextPos)
-        baseXLineDimension2 = dimenisions.addDistanceDimension(baseXLine.startSketchPoint, baseXLine.endSketchPoint, adsk.fusion.DimensionOrientations.AlignedDimensionOrientation, baseXLineDimension2TextPos)
-        baseXLineDimension1.parameter.expression = f'{-minCoordinate} * {chordDimension.parameter.name}'
-        baseXLineDimension2.parameter.expression = f'{-minCoordinate} * {chordDimension.parameter.name}'
-        sketch.isComputeDeferred = True
         points = adsk.core.ObjectCollection.create()
         for i in range(len(airfoilPoints) - 1):
             point = adsk.core.Point3D.create(airfoilPoints[i][0], airfoilPoints[i][1], 0)
             point.transformBy(matrix)
             points.add(point)
-        point = adsk.core.Point3D.create(airfoilPoints[-1][0] + (airfoilPoints[0] == airfoilPoints[-1]), airfoilPoints[-1][1], 0)
-        point.transformBy(matrix)
-        points.add(point)
-        if isSplineFit:
-            spline = sketchCurves.sketchFittedSplines.add(points)
-            for i in range(points.count):
-                splinePointXDimension = dimenisions.addOffsetDimension(baseXLine, spline.fitPoints.item(i), adsk.core.Point3D.create(0, 0, 0), True)
-                splinePointYDimension = dimenisions.addOffsetDimension(baseYLine, spline.fitPoints.item(i), adsk.core.Point3D.create(0, 0, 0), True)
-                splinePointXDimension.parameter.expression = f'{(airfoilPoints[i][0] - minCoordinate)} * {chordDimension.parameter.name}'
-                splinePointYDimension.parameter.expression = f'{(airfoilPoints[i][1] - minCoordinate)} * {chordDimension.parameter.name}'
-        else:
-            lines = []
-            for i in range(points.count - 1):
-                line = sketchCurves.sketchLines.addByTwoPoints(points.item(i), points.item(i + 1))
-                lines.append(line)
-                linePointXDimension = dimenisions.addOffsetDimension(baseXLine, line.startSketchPoint, adsk.core.Point3D.create(0, 0, 0), True)
-                linePointYDimension = dimenisions.addOffsetDimension(baseYLine, line.startSketchPoint, adsk.core.Point3D.create(0, 0, 0), True)
+        if useDimensions == True:
+            point = adsk.core.Point3D.create(airfoilPoints[-1][0] + (airfoilPoints[0] == airfoilPoints[-1]), airfoilPoints[-1][1], 0)
+            point.transformBy(matrix)
+            points.add(point)
+            baseXLinePoint = adsk.core.Point3D.create(-0.1, 0, 0)
+            baseYLinePoint = adsk.core.Point3D.create(0, -0.1, 0)
+            baseOriginPoint = adsk.core.Point3D.create(-0.1, -0.1, 0)
+            baseXLinePoint.transformBy(matrix)
+            baseYLinePoint.transformBy(matrix)
+            baseOriginPoint.transformBy(matrix)
+            baseXLine = sketchCurves.sketchLines.addByTwoPoints(baseXLinePoint, baseOriginPoint)
+            baseYLine = sketchCurves.sketchLines.addByTwoPoints(baseYLinePoint, baseXLine.endSketchPoint)
+            chordLine = sketchCurves.sketchLines.addByTwoPoints(baseXLine.startSketchPoint, sketchOriginPoint)
+            baseXLine.isConstruction = True
+            baseYLine.isConstruction = True
+            chordLine.isConstruction = True
+            constraints.addPerpendicular(baseXLine, baseYLine)
+            constraints.addPerpendicular(baseXLine, chordLine)
+            constraints.addEqual(baseXLine, baseYLine)
+            constraints.addCoincident(sketchEdgePoint, chordLine)
+            dimenisions = sketch.sketchDimensions
+            chordDimensionTextPos = adsk.core.Point3D.create(0.5, minCoordinate - 0.1, 0)
+            baseXLineDimension1TextPos = adsk.core.Point3D.create(minCoordinate - 0.1, 0.1, 0)
+            baseXLineDimension1TextPos.transformBy(matrix)
+            baseXLineDimension2TextPos = adsk.core.Point3D.create(minCoordinate - 0.1, minCoordinate / 2.0, 0)
+            baseXLineDimension2TextPos.transformBy(matrix)
+            chordDimension = dimenisions.addDistanceDimension(sketchOriginPoint, sketchEdgePoint, adsk.fusion.DimensionOrientations.AlignedDimensionOrientation, chordDimensionTextPos, False)
+            baseXLineDimension1 = dimenisions.addDistanceDimension(baseXLine.startSketchPoint, sketchOriginPoint, adsk.fusion.DimensionOrientations.AlignedDimensionOrientation, baseXLineDimension1TextPos)
+            baseXLineDimension2 = dimenisions.addDistanceDimension(baseXLine.startSketchPoint, baseXLine.endSketchPoint, adsk.fusion.DimensionOrientations.AlignedDimensionOrientation, baseXLineDimension2TextPos)
+            baseXLineDimension1.parameter.expression = f'{-minCoordinate} * {chordDimension.parameter.name}'
+            baseXLineDimension2.parameter.expression = f'{-minCoordinate} * {chordDimension.parameter.name}'
+            sketch.isComputeDeferred = True
+            if isSplineFit:
+                spline = sketchCurves.sketchFittedSplines.add(points)
+                for i in range(points.count):
+                    splinePointXDimension = dimenisions.addOffsetDimension(baseXLine, spline.fitPoints.item(i), adsk.core.Point3D.create(0, 0, 0), True)
+                    splinePointYDimension = dimenisions.addOffsetDimension(baseYLine, spline.fitPoints.item(i), adsk.core.Point3D.create(0, 0, 0), True)
+                    splinePointXDimension.parameter.expression = f'{(airfoilPoints[i][0] - minCoordinate)} * {chordDimension.parameter.name}'
+                    splinePointYDimension.parameter.expression = f'{(airfoilPoints[i][1] - minCoordinate)} * {chordDimension.parameter.name}'
+            else:
+                lines = []
+                for i in range(points.count - 1):
+                    line = sketchCurves.sketchLines.addByTwoPoints(points.item(i), points.item(i + 1))
+                    lines.append(line)
+                    linePointXDimension = dimenisions.addOffsetDimension(baseXLine, line.startSketchPoint, adsk.core.Point3D.create(0, 0, 0), True)
+                    linePointYDimension = dimenisions.addOffsetDimension(baseYLine, line.startSketchPoint, adsk.core.Point3D.create(0, 0, 0), True)
+                    linePointXDimension.parameter.expression = f'{(airfoilPoints[i][0] - minCoordinate)} * {chordDimension.parameter.name}'
+                    linePointYDimension.parameter.expression = f'{(airfoilPoints[i][1] - minCoordinate)} * {chordDimension.parameter.name}'
+                linePointXDimension = dimenisions.addOffsetDimension(baseXLine, line.endSketchPoint, adsk.core.Point3D.create(0, 0, 0), True)
+                linePointYDimension = dimenisions.addOffsetDimension(baseYLine, line.endSketchPoint, adsk.core.Point3D.create(0, 0, 0), True)
                 linePointXDimension.parameter.expression = f'{(airfoilPoints[i][0] - minCoordinate)} * {chordDimension.parameter.name}'
                 linePointYDimension.parameter.expression = f'{(airfoilPoints[i][1] - minCoordinate)} * {chordDimension.parameter.name}'
-            linePointXDimension = dimenisions.addOffsetDimension(baseXLine, line.endSketchPoint, adsk.core.Point3D.create(0, 0, 0), True)
-            linePointYDimension = dimenisions.addOffsetDimension(baseYLine, line.endSketchPoint, adsk.core.Point3D.create(0, 0, 0), True)
-            linePointXDimension.parameter.expression = f'{(airfoilPoints[i][0] - minCoordinate)} * {chordDimension.parameter.name}'
-            linePointYDimension.parameter.expression = f'{(airfoilPoints[i][1] - minCoordinate)} * {chordDimension.parameter.name}'
 
-        if connectTrailingEdge and airfoilPoints[0] != airfoilPoints[-1]:
+            if connectTrailingEdge and airfoilPoints[0] != airfoilPoints[-1]:
+                if isSplineFit:
+                    sketchCurves.sketchLines.addByTwoPoints(spline.fitPoints.item(0), spline.fitPoints.item(spline.fitPoints.count - 1))
+                else:
+                    sketchCurves.sketchLines.addByTwoPoints(lines[0].startSketchPoint, lines[-1].endSketchPoint)
+            sketch.isComputeDeferred = False
+        else:
             if isSplineFit:
-                sketchCurves.sketchLines.addByTwoPoints(spline.fitPoints.item(0), spline.fitPoints.item(spline.fitPoints.count - 1))
+                point = adsk.core.Point3D.create(airfoilPoints[-1][0] - 1 , airfoilPoints[-1][1], 0)
+                point.transformBy(matrix)
+                points.add(point)
+                spline = sketchCurves.sketchFittedSplines.add(points)
+                startSketchPoint = spline.startSketchPoint
+                endSketchPoint = spline.endSketchPoint
+                spline.endSketchPoint.move(sketchOriginPoint.geometry.vectorTo(sketchEdgePoint.geometry))
+                fitPoints = spline.fitPoints
+                if connectTrailingEdge:
+                    sketchCurves.sketchLines.addByTwoPoints(startSketchPoint, endSketchPoint)
+                for i in range(fitPoints.count):
+                    fitPoints.item(i).isFixed = True                    
             else:
-                sketchCurves.sketchLines.addByTwoPoints(lines[0].startSketchPoint, lines[-1].endSketchPoint)
-        sketch.isComputeDeferred = False
+                point = adsk.core.Point3D.create(airfoilPoints[-1][0], airfoilPoints[-1][1], 0)
+                point.transformBy(matrix)
+                points.add(point)
+                lines = []
+                lines.append(sketchCurves.sketchLines.addByTwoPoints(points.item(0), points.item(1)))
+                for i in range(points.count - 2):
+                    lines.append(sketchCurves.sketchLines.addByTwoPoints(lines[-1].endSketchPoint, points.item(i + 2)))
+                startSketchPoint = lines[0].startSketchPoint
+                endSketchPoint = lines[-1].endSketchPoint
+                if connectTrailingEdge:
+                    sketchCurves.sketchLines.addByTwoPoints(startSketchPoint, endSketchPoint) 
+                for line in lines:
+                    line.startSketchPoint.isFixed = True
+                    line.endSketchPoint.isFixed = True
+            #if airfoilPoints[0] == airfoilPoints[-1]:
+            #    constraints.addCoincident(startSketchPoint, endSketchPoint)
+            #elif connectTrailingEdge:
+            #    sketchCurves.sketchLines.addByTwoPoints(startSketchPoint, endSketchPoint) 
         return sketch
     except Exception as error:
         exception_type, exception_object, exception_traceback = sys.exc_info()
