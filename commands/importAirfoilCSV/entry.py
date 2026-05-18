@@ -304,7 +304,7 @@ def command_preview(args: adsk.core.CommandEventArgs):
             else:
                 originPointVertex = axisEntity.startVertex.geometry
                 edgePointVertex = axisEntity.endVertex.geometry
-            if inputs.itemById('SwapDirection').value:
+            if _swapDirection:
                 originPointVertex, edgePointVertex = edgePointVertex, originPointVertex
 
         airfoilPoints = []
