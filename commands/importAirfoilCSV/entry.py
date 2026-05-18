@@ -25,9 +25,12 @@ local_handlers = []
 sketch = None
 
 _filePass = None
-_isSplineFit = False
+_connectTrailingEdge = True
+_isSplineFit = True
 _swapDirection = False
 _useDimensions = False
+_selectAxisMethodisLine = True
+_tiltAngle = 0.0
 
 def start():
     try:
@@ -81,42 +84,42 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
         fileNameTextBox.isFullWidth = True
         fileNameTextBox.isVisible = _filePass is not None
         #inputs.addTextBoxCommandInput('filePassText', 'File Pass', 'Selected file pass', 1, True)
-        inputs.addBoolValueInput('edgeLineBool', 'Connect Trailing Edge', True, '', True)
-        inputs.addBoolValueInput('useDimensions', 'Use Dimensions', True, '', False)
+        inputs.addBoolValueInput('edgeLineBool', 'Connect Trailing Edge', True, '', _connectTrailingEdge)
+        inputs.addBoolValueInput('useDimensions', 'Use Dimensions', True, '', _useDimensions)
         connectPointsButton = inputs.addButtonRowCommandInput('ConnectionPointsMethodSelectButton', 'Connection Points Method', False)
         connectPointsButton.listItems.clear()
-        connectPointsButton.listItems.add('Linear', True, os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/LineFitIcon'), -1)
-        connectPointsButton.listItems.add('Spline', False, os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/SplineFitIcon'), -1)
+        connectPointsButton.listItems.add('Spline', _isSplineFit, os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/SplineFitIcon'), -1)
+        connectPointsButton.listItems.add('Linear', not _isSplineFit, os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/LineFitIcon'), -1)
         axisSelectButton = inputs.addButtonRowCommandInput('MethodSelectButton', 'Method', False)
         axisSelectButton.listItems.clear()
-        axisSelectButton.listItems.add('Line', True, os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/OneLineSelect'), -1)
-        axisSelectButton.listItems.add('Points', False, os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/TwoPointsSelect'), -1)
+        axisSelectButton.listItems.add('Line', _selectAxisMethodisLine, os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/OneLineSelect'), -1)
+        axisSelectButton.listItems.add('Points', not _selectAxisMethodisLine, os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/TwoPointsSelect'), -1)
         axisInput = inputs.addSelectionInput('axis', 'Axis', 'Select Axis')
-        axisInput.isVisible = True
+        axisInput.isVisible = _selectAxisMethodisLine
         axisInput.setSelectionLimits(1, 1)
         axisInput.addSelectionFilter('LinearEdges')
         axisInput.addSelectionFilter('SketchLines')
         #axisInput.addSelectionFilter('ConstructionLines')
         originPointInput = inputs.addSelectionInput('originPoint', 'Origin Point', 'Select Origin Point')
-        originPointInput.isVisible = False
+        originPointInput.isVisible = not _selectAxisMethodisLine
         originPointInput.setSelectionLimits(0, 0)
         originPointInput.addSelectionFilter('Vertices')
         originPointInput.addSelectionFilter('SketchPoints')
         originPointInput.addSelectionFilter('ConstructionPoints')
         edgePointInput = inputs.addSelectionInput('edgePoint', 'Trailing Edge Point', 'Select Trailing Edge Point')
-        edgePointInput.isVisible = False
+        edgePointInput.isVisible = not _selectAxisMethodisLine
         edgePointInput.setSelectionLimits(0, 0)
         edgePointInput.addSelectionFilter('Vertices')
         edgePointInput.addSelectionFilter('SketchPoints')
         edgePointInput.addSelectionFilter('ConstructionPoints')
         inputs.addBoolValueInput('SwapDirection', 'Swap Direction', False, os.path.join(os.path.dirname(os.path.abspath(__file__)), './resources/SwapIcon'), False)
-        inputs.addAngleValueCommandInput('tiltAngle', 'Tilt Angle', adsk.core.ValueInput.createByReal(0)).isVisible = False
+        inputs.addAngleValueCommandInput('tiltAngle', 'Tilt Angle', adsk.core.ValueInput.createByReal(_tiltAngle)).isVisible = False
     except Exception as error:
         ui.messageBox(str(error))
 
 def command_changed(args: adsk.core.InputChangedEventArgs):
     try:
-        global _swapDirection
+        global _swapDirection, _isSplineFit, _useDimensions, _selectAxisMethodisLine, _connectTrailingEdge, _filePass, _tiltAngle
         inputs = args.inputs
         input = args.input
         if input.id == 'fileSelectButton':
@@ -128,7 +131,6 @@ def command_changed(args: adsk.core.InputChangedEventArgs):
                 return
             filepass = dialog.filename
             filename = filepass.rsplit('/', 1)[1]
-            global _filePass
             _filePass = filepass
             args.inputs.itemById('fileNameText').text = filename
             args.inputs.itemById('fileNameText').isVisible = True
@@ -177,6 +179,7 @@ def command_changed(args: adsk.core.InputChangedEventArgs):
             tiltAngleInput : adsk.core.AngleValueCommandInput = inputs.itemById('tiltAngle')
             tiltAngleInput.isVisible = False
             if input.selectedItem.name == 'Line':
+                _selectAxisMethodisLine = True
                 axisInput.isVisible = True
                 axisInput.setSelectionLimits(1, 1)
                 originPointInput.isVisible = False
@@ -185,6 +188,7 @@ def command_changed(args: adsk.core.InputChangedEventArgs):
                 edgePointInput.setSelectionLimits(0, 0)
                 axisInput.isEnabled = True
             else:
+                _selectAxisMethodisLine = False
                 originPointInput.isVisible = True
                 originPointInput.setSelectionLimits(1, 1)
                 edgePointInput.isVisible = True
@@ -243,11 +247,15 @@ def command_changed(args: adsk.core.InputChangedEventArgs):
                         originPoint, edgePoint = edgePoint, originPoint
                     setAngleManipulator(tiltAngleInput, originPoint, edgePoint)
         elif input.id == 'ConnectionPointsMethodSelectButton':
-            global _isSplineFit
             _isSplineFit = input.selectedItem.name == 'Spline'
         elif input.id == 'useDimensions':
-            global _useDimensions
             _useDimensions = input.value
+        elif input.id == 'connectTrailingEdge':
+            _connectTrailingEdge = input.value
+        elif input.id == 'tiltAngle':
+            tiltAngleValue : adsk.core.ValueCommandInput = input
+            _tiltAngle = tiltAngleValue.value
+        
 
     except Exception as error:
         exception_type, exception_object, exception_traceback = sys.exc_info()
@@ -264,10 +272,10 @@ def command_execute(args: adsk.core.CommandEventArgs):
         if methodSelectButton.selectedItem.name == 'Points':
             originPointEntity = inputs.itemById('originPoint').selection(0).entity
             edgePointEntity = inputs.itemById('edgePoint').selection(0).entity
-            sketch = createAirfoilSketchByPoints(root, _filePass, originPointEntity, edgePointEntity, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value, _isSplineFit, _useDimensions)
+            sketch = createAirfoilSketchByPoints(root, _filePass, originPointEntity, edgePointEntity, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value, _isSplineFit, inputs.itemById('useDimensions').value)
         else:
             axisEntity = inputs.itemById('axis').selection(0).entity
-            sketch = createAirfoilSketchByLine(root, _filePass, axisEntity, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value, _swapDirection, _isSplineFit, _useDimensions)
+            sketch = createAirfoilSketchByLine(root, _filePass, axisEntity, inputs.itemById('tiltAngle').value, inputs.itemById('edgeLineBool').value, _swapDirection, _isSplineFit, inputs.itemById('useDimensions').value)
     except Exception as error:
         exception_type, exception_object, exception_traceback = sys.exc_info()
         filename = exception_traceback.tb_frame.f_code.co_filename
