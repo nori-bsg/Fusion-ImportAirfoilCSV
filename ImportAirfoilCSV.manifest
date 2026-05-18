@@ -4,10 +4,10 @@
 	"id":	"92cab451-fca5-429f-97e5-8f7ff89dbf80",
 	"author":	"no~ri~",
 	"description":	{
-		"":	"Import Airfoil curve from CSV file."
+		"":	"Import Airfoil curve from DAT or CSV file."
 	},
-	"version":	"",
-	"runOnStartup":	false,
+	"version":	"2.0",
+	"runOnStartup":	true,
 	"supportedOS":	"windows|mac",
 	"editEnabled":	true
 }
